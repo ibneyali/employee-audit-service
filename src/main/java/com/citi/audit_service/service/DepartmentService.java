@@ -1,0 +1,50 @@
+package com.citi.audit_service.service;
+
+import com.citi.audit_service.model.Department;
+import com.citi.audit_service.repository.DepartmentRepository;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.Optional;
+
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class DepartmentService {
+
+    private final DepartmentRepository departmentRepository;
+
+    public List<Department> getAllDepartments() {
+        return (List<Department>) departmentRepository.findAll();
+    }
+
+    public Optional<Department> getDepartmentById(Long id) {
+        return departmentRepository.findById(id);
+    }
+
+    public Optional<Department> getDepartmentByName(String name) {
+        return departmentRepository.findByName(name);
+    }
+
+    public Department createDepartment(Department department) {
+        return departmentRepository.save(department);
+    }
+
+    public Department updateDepartment(Long id, Department departmentDetails) {
+        Department department = departmentRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Department not found with id: " + id));
+
+        department.setName(departmentDetails.getName());
+        department.setUpdatedBy(departmentDetails.getUpdatedBy());
+
+        return departmentRepository.save(department);
+    }
+
+    public void deleteDepartment(Long id) {
+        Department department = departmentRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Department not found with id: " + id));
+        departmentRepository.delete(department);
+    }
+}
