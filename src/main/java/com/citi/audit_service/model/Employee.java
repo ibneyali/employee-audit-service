@@ -46,4 +46,8 @@ public class Employee {
 
     @Column(name = "UPDATED_BY")
     private String updatedBy;
+
+    @Version
+    @Column(name = "VERSION")
+    private Integer version;
 }
