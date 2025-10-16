@@ -1,5 +1,7 @@
 package com.citi.audit_service.service;
 
+import com.citi.audit_service.annotation.AuditAction;
+import com.citi.audit_service.annotation.Auditable;
 import com.citi.audit_service.model.Employee;
 import com.citi.audit_service.repository.EmployeeRepository;
 import com.citi.audit_service.exception.EmployeeNotFoundException;
@@ -17,7 +19,6 @@ import java.util.Optional;
 public class EmployeeService {
 
     private final EmployeeRepository employeeRepository;
-    private final AuditService auditService;
 
     public List<Employee> getAllEmployees() {
         return (List<Employee>) employeeRepository.findAll();
@@ -43,6 +44,7 @@ public class EmployeeService {
         return employeeRepository.findByTrainingId(trainingId);
     }
 
+    @Auditable(action = AuditAction.CREATE)
     public Employee createEmployee(Employee employee) {
         // Set timestamps
         employee.setCreatedTimestamp(LocalDateTime.now());
@@ -59,31 +61,13 @@ public class EmployeeService {
         // Save employee (version will be automatically set to 0 by JPA)
         Employee savedEmployee = employeeRepository.save(employee);
 
-        // Log audit event for creation
-        String initiator = employee.getUpdatedBy() != null ? employee.getUpdatedBy() : "SYSTEM";
-        auditService.logEmployeeCreated(savedEmployee, initiator);
-
         return savedEmployee;
     }
 
+    @Auditable(action = AuditAction.UPDATE)
     public Employee updateEmployee(Long id, Employee employeeDetails) {
         Employee existingEmployee = employeeRepository.findById(id)
                 .orElseThrow(() -> new EmployeeNotFoundException(id));
-
-        // Create a copy of the old employee state for audit logging
-        Employee oldEmployeeSnapshot = Employee.builder()
-                .id(existingEmployee.getId())
-                .firstName(existingEmployee.getFirstName())
-                .lastName(existingEmployee.getLastName())
-                .email(existingEmployee.getEmail())
-                .phone(existingEmployee.getPhone())
-                .departmentId(existingEmployee.getDepartmentId())
-                .addressId(existingEmployee.getAddressId())
-                .createdTimestamp(existingEmployee.getCreatedTimestamp())
-                .updatedTimestamp(existingEmployee.getUpdatedTimestamp())
-                .updatedBy(existingEmployee.getUpdatedBy())
-                .version(existingEmployee.getVersion())
-                .build();
 
         // Update employee fields
         existingEmployee.setFirstName(employeeDetails.getFirstName());
@@ -99,37 +83,15 @@ public class EmployeeService {
         // Save updated employee
         Employee updatedEmployee = employeeRepository.save(existingEmployee);
 
-        // Log audit event for update with old and new values
-        String initiator = employeeDetails.getUpdatedBy() != null ? employeeDetails.getUpdatedBy() : "SYSTEM";
-        auditService.logEmployeeUpdated(oldEmployeeSnapshot, updatedEmployee, initiator);
-
         return updatedEmployee;
     }
 
+    @Auditable(action = AuditAction.DELETE)
     public void deleteEmployee(Long id) {
         Employee employee = employeeRepository.findById(id)
                 .orElseThrow(() -> new EmployeeNotFoundException(id));
 
-        // Create a snapshot before deletion for audit
-        Employee employeeSnapshot = Employee.builder()
-                .id(employee.getId())
-                .firstName(employee.getFirstName())
-                .lastName(employee.getLastName())
-                .email(employee.getEmail())
-                .phone(employee.getPhone())
-                .departmentId(employee.getDepartmentId())
-                .addressId(employee.getAddressId())
-                .createdTimestamp(employee.getCreatedTimestamp())
-                .updatedTimestamp(employee.getUpdatedTimestamp())
-                .updatedBy(employee.getUpdatedBy())
-                .version(employee.getVersion())
-                .build();
-
         // Delete employee
         employeeRepository.delete(employee);
-
-        // Log audit event for deletion
-        String initiator = employee.getUpdatedBy() != null ? employee.getUpdatedBy() : "SYSTEM";
-        auditService.logEmployeeDeleted(employeeSnapshot, initiator);
     }
 }
