@@ -2,8 +2,9 @@ package com.citi.audit_service.aspect;
 
 import com.citi.audit_service.annotation.AuditAction;
 import com.citi.audit_service.annotation.Auditable;
-import com.citi.audit_service.model.Employee;
 import com.citi.audit_service.service.AuditService;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.aspectj.lang.JoinPoint;
@@ -14,8 +15,9 @@ import org.aspectj.lang.reflect.MethodSignature;
 import org.springframework.stereotype.Component;
 
 /**
- * AOP Aspect for auditing employee operations.
+ * Generic AOP Aspect for auditing operations on any entity.
  * This aspect intercepts methods annotated with @Auditable and logs audit events.
+ * Works with Employee, Department, Address, Training, or any other entity.
  */
 @Aspect
 @Component
@@ -24,54 +26,39 @@ import org.springframework.stereotype.Component;
 public class AuditAspect {
 
     private final AuditService auditService;
+    private final ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
 
-    // ThreadLocal to store old employee state for UPDATE operations
-    private final ThreadLocal<Employee> oldEmployeeState = new ThreadLocal<>();
+    // ThreadLocal to store old entity state for UPDATE/DELETE operations
+    // Stores a deep copy to ensure changes are properly detected
+    private final ThreadLocal<Object> oldEntityState = new ThreadLocal<>();
 
     /**
-     * Intercept methods before execution to capture the old state for UPDATE operations
+     * Intercept methods before execution to capture the old state for UPDATE/DELETE operations
      */
     @Before("@annotation(auditable)")
     public void beforeAuditableMethod(JoinPoint joinPoint, Auditable auditable) {
         if (auditable.action() == AuditAction.UPDATE || auditable.action() == AuditAction.DELETE) {
             Object[] args = joinPoint.getArgs();
 
-            // For UPDATE: first argument is ID, second is the new employee details
-            // For DELETE: first argument is ID
+            // For UPDATE/DELETE: first argument is typically the ID
             if (args.length > 0 && args[0] instanceof Long) {
-                Long employeeId = (Long) args[0];
-
-                // Get the target object (EmployeeService instance)
+                Long entityId = (Long) args[0];
                 Object target = joinPoint.getTarget();
 
                 try {
-                    // Use reflection to call getEmployeeById to get current state
-                    var method = target.getClass().getMethod("getEmployeeById", Long.class);
-                    var optionalEmployee = method.invoke(target, employeeId);
+                    // Dynamically find and call the get method (e.g., getEmployeeById, getDepartmentById)
+                    Object currentEntity = findEntityById(target, entityId, auditable.entity());
 
-                    if (optionalEmployee != null) {
-                        var getMethod = optionalEmployee.getClass().getMethod("get");
-                        Employee currentEmployee = (Employee) getMethod.invoke(optionalEmployee);
+                    if (currentEntity != null) {
+                        // Create a DEEP COPY of the entity to avoid reference issues
+                        Object deepCopy = createDeepCopy(currentEntity);
 
-                        // Create a snapshot of the current state
-                        Employee snapshot = Employee.builder()
-                                .id(currentEmployee.getId())
-                                .firstName(currentEmployee.getFirstName())
-                                .lastName(currentEmployee.getLastName())
-                                .email(currentEmployee.getEmail())
-                                .phone(currentEmployee.getPhone())
-                                .departmentId(currentEmployee.getDepartmentId())
-                                .addressId(currentEmployee.getAddressId())
-                                .createdTimestamp(currentEmployee.getCreatedTimestamp())
-                                .updatedTimestamp(currentEmployee.getUpdatedTimestamp())
-                                .updatedBy(currentEmployee.getUpdatedBy())
-                                .version(currentEmployee.getVersion())
-                                .build();
-
-                        oldEmployeeState.set(snapshot);
+                        // Store snapshot of current state
+                        oldEntityState.set(deepCopy);
+                        log.debug("Captured old state for {} with ID: {}", auditable.entity(), entityId);
                     }
                 } catch (Exception e) {
-                    log.error("Failed to capture old employee state for audit", e);
+                    log.error("Failed to capture old {} state for audit", auditable.entity(), e);
                 }
             }
         }
@@ -87,87 +74,171 @@ public class AuditAspect {
             Object[] args = joinPoint.getArgs();
 
             String initiator = extractInitiator(args, result);
+            String domain = auditable.domain();
+            String entity = auditable.entity();
 
             switch (auditable.action()) {
                 case CREATE:
-                    handleCreate(result, initiator);
+                    handleCreate(result, domain, entity, initiator);
                     break;
                 case UPDATE:
-                    handleUpdate(result, initiator);
+                    handleUpdate(result, domain, entity, initiator);
                     break;
                 case DELETE:
-                    handleDelete(initiator);
+                    handleDelete(domain, entity, initiator);
                     break;
             }
+
         } catch (Exception e) {
-            log.error("Failed to log audit event", e);
+            log.error("Failed to log audit event for {}", auditable.entity(), e);
         } finally {
             // Clean up ThreadLocal to prevent memory leaks
-            oldEmployeeState.remove();
+            oldEntityState.remove();
         }
     }
 
     /**
-     * Handle CREATE audit event
+     * Handle CREATE audit event - generic for any entity
      */
-    private void handleCreate(Object result, String initiator) {
-        if (result instanceof Employee savedEmployee) {
-            auditService.logEmployeeCreated(savedEmployee, initiator);
-            log.debug("Audit logged: Employee created - ID: {}", savedEmployee.getId());
+    private void handleCreate(Object result, String domain, String entity, String initiator) {
+        if (result != null) {
+            auditService.logEntityCreated(domain, entity, result, initiator);
+            log.debug("Audit logged: {} created - ID: {}", entity, getEntityId(result));
         }
     }
 
     /**
-     * Handle UPDATE audit event
+     * Handle UPDATE audit event - generic for any entity
      */
-    private void handleUpdate(Object result, String initiator) {
-        if (result instanceof Employee) {
-            Employee updatedEmployee = (Employee) result;
-            Employee oldEmployee = oldEmployeeState.get();
+    private void handleUpdate(Object result, String domain, String entity, String initiator) {
+        if (result != null) {
+            Object oldEntity = oldEntityState.get();
 
-            if (oldEmployee != null) {
-                auditService.logEmployeeUpdated(oldEmployee, updatedEmployee, initiator);
-                log.debug("Audit logged: Employee updated - ID: {}", updatedEmployee.getId());
+            if (oldEntity != null) {
+                auditService.logEntityUpdated(domain, entity, oldEntity, result, initiator);
+                log.debug("Audit logged: {} updated - ID: {}", entity, getEntityId(result));
+            } else {
+                log.warn("Old {} state not found for UPDATE audit", entity);
             }
         }
     }
 
     /**
-     * Handle DELETE audit event
+     * Handle DELETE audit event - generic for any entity
      */
-    private void handleDelete(String initiator) {
-        Employee deletedEmployee = oldEmployeeState.get();
+    private void handleDelete(String domain, String entity, String initiator) {
+        Object deletedEntity = oldEntityState.get();
 
-        if (deletedEmployee != null) {
-            auditService.logEmployeeDeleted(deletedEmployee, initiator);
-            log.debug("Audit logged: Employee deleted - ID: {}", deletedEmployee.getId());
+        if (deletedEntity != null) {
+            auditService.logEntityDeleted(domain, entity, deletedEntity, initiator);
+            log.debug("Audit logged: {} deleted - ID: {}", entity, getEntityId(deletedEntity));
+        } else {
+            log.warn("Old {} state not found for DELETE audit", entity);
         }
     }
 
     /**
-     * Extract initiator from method arguments or result
+     * Dynamically find entity by ID using reflection
+     * Supports methods like: getEmployeeById, getDepartmentById, getAddressById, etc.
+     */
+    private Object findEntityById(Object service, Long entityId, String entityType) {
+        try {
+            // Try common method naming patterns
+            String[] methodPatterns = {
+                "get" + entityType.substring(0, 1).toUpperCase() + entityType.substring(1).toLowerCase() + "ById",
+                "getById",
+                "findById"
+            };
+
+            for (String methodName : methodPatterns) {
+                try {
+                    var method = service.getClass().getMethod(methodName, Long.class);
+                    Object result = method.invoke(service, entityId);
+
+                    // Handle Optional return type
+                    if (result != null && result.getClass().getName().contains("Optional")) {
+                        var optionalGetMethod = result.getClass().getMethod("orElse", Object.class);
+                        return optionalGetMethod.invoke(result, (Object) null);
+                    }
+
+                    return result;
+                } catch (NoSuchMethodException e) {
+                    // Try next pattern
+                    continue;
+                }
+            }
+        } catch (Exception e) {
+            log.error("Failed to find {} by ID: {}", entityType, entityId, e);
+        }
+        return null;
+    }
+
+    /**
+     * Extract initiator from method arguments or result using reflection
      */
     private String extractInitiator(Object[] args, Object result) {
-        // Try to get initiator from Employee object in arguments
+        // Try to get 'updatedBy' field from any argument
         for (Object arg : args) {
-            if (arg instanceof Employee) {
-                Employee emp = (Employee) arg;
-                if (emp.getUpdatedBy() != null) {
-                    return emp.getUpdatedBy();
+            if (arg != null) {
+                String updatedBy = getUpdatedBy(arg);
+                if (updatedBy != null) {
+                    return updatedBy;
                 }
             }
         }
 
         // Try to get initiator from result
-        if (result instanceof Employee) {
-            Employee emp = (Employee) result;
-            if (emp.getUpdatedBy() != null) {
-                return emp.getUpdatedBy();
+        if (result != null) {
+            String updatedBy = getUpdatedBy(result);
+            if (updatedBy != null) {
+                return updatedBy;
             }
         }
 
         // Default to SYSTEM if no initiator found
         return "SYSTEM";
     }
-}
 
+    /**
+     * Get 'updatedBy' field from an object using reflection
+     */
+    private String getUpdatedBy(Object obj) {
+        try {
+            var method = obj.getClass().getMethod("getUpdatedBy");
+            Object result = method.invoke(obj);
+            return result != null ? result.toString() : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Get entity ID from any object using reflection
+     */
+    private Long getEntityId(Object obj) {
+        try {
+            var method = obj.getClass().getMethod("getId");
+            return (Long) method.invoke(obj);
+        } catch (Exception e) {
+            log.warn("Failed to extract ID from object", e);
+            return null;
+        }
+    }
+
+    /**
+     * Create a deep copy of an entity using JSON serialization/deserialization
+     * This ensures the old state is truly independent from the new state
+     */
+    private Object createDeepCopy(Object entity) {
+        try {
+            // Serialize to JSON string
+            String json = objectMapper.writeValueAsString(entity);
+
+            // Deserialize back to object (creates a new instance)
+            return objectMapper.readValue(json, entity.getClass());
+        } catch (Exception e) {
+            log.error("Failed to create deep copy of entity, falling back to original reference", e);
+            return entity; // Fallback to original (not ideal but prevents crashes)
+        }
+    }
+}

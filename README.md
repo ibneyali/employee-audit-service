@@ -1,32 +1,463 @@
 # Employee Audit Service
 
-A Spring Boot application for managing employee data with comprehensive audit logging, version tracking, and global exception handling.
+A Spring Boot application for managing employee data with **Generic AOP-Based Audit Logging**, comprehensive change tracking, version control, and global exception handling.
 
 ---
 
 ## 📋 Table of Contents
 
 - [Overview](#overview)
+- [Key Features](#key-features)
+- [🆕 Generic AOP Audit System](#-generic-aop-audit-system)
 - [Database Schema](#database-schema)
-- [Features](#features)
-- [Audit Logging System](#audit-logging-system)
+- [How Audit System Works](#how-audit-system-works)
 - [API Endpoints](#api-endpoints)
 - [Enhanced Audit Features](#enhanced-audit-features)
 - [Exception Handling](#exception-handling)
 - [Getting Started](#getting-started)
 - [Testing Examples](#testing-examples)
+- [Advanced Topics](#advanced-topics)
 
 ---
 
 ## Overview
 
 This application provides a complete employee management system with:
-- ✅ Full CRUD operations for employees
-- ✅ Comprehensive audit logging for all changes
+- ✅ **Generic AOP-Based Audit Logging** - Works for ANY entity (Employee, Department, Address, etc.)
+- ✅ Full CRUD operations for employees, departments, addresses, and trainings
 - ✅ Automatic version tracking with optimistic locking
-- ✅ Field-level change tracking
+- ✅ **Detailed field-level change tracking** with old/new value comparison
 - ✅ Global exception handling with consistent error responses
 - ✅ RESTful API with Swagger/OpenAPI documentation
+- ✅ Zero business logic pollution - audit logic completely separated using AOP
+
+---
+
+## Key Features
+
+### 🎯 Generic AOP-Based Auditing
+- **One Annotation, Automatic Auditing**: Just add `@Auditable` to any service method
+- **Works for ALL Entities**: Employee, Department, Address, Training, or any future entity
+- **Zero Code Duplication**: Audit logic written once, reused everywhere
+- **Deep Copy Change Detection**: Accurately captures field-by-field changes
+- **Thread-Safe**: Uses ThreadLocal for concurrent request handling
+
+### 🔍 Detailed Change Tracking
+- **Field-Level Detection**: Knows exactly which fields changed
+- **Old vs New Comparison**: Captures both states for every update
+- **Human-Readable Summaries**: "EMPLOYEE updated: firstName (from 'John' to 'Jane')"
+- **JSON Payload Storage**: Complete audit trail with full entity data
+
+### 🔐 Version Control & Optimistic Locking
+- **JPA @Version**: Automatic version tracking
+- **Concurrent Update Protection**: Prevents lost updates
+- **Audit Version Tracking**: Each audit event captures entity version
+
+### 🚨 Comprehensive Exception Handling
+- **Centralized Error Handling**: `@ControllerAdvice` for consistent responses
+- **User-Friendly Messages**: Clear, actionable error descriptions
+- **Proper HTTP Status Codes**: 404, 409, 400, 500, etc.
+
+---
+
+## 🆕 Generic AOP Audit System
+
+### What is AOP (Aspect-Oriented Programming)?
+
+AOP is a programming paradigm that allows you to separate **cross-cutting concerns** (like auditing, logging, security) from your business logic.
+
+**Without AOP (❌ Old Approach):**
+```java
+public Employee updateEmployee(Long id, Employee details) {
+    // ❌ Business logic mixed with audit code
+    Employee oldEmployee = getEmployeeById(id);
+    Employee updatedEmployee = repository.save(employee);
+    auditService.logEmployeeUpdated(oldEmployee, updatedEmployee, initiator); // Manual!
+    return updatedEmployee;
+}
+```
+
+**With AOP (✅ New Approach):**
+```java
+@Auditable(action = AuditAction.UPDATE, domain = "HR", entity = "EMPLOYEE")
+public Employee updateEmployee(Long id, Employee details) {
+    // ✅ Pure business logic - audit happens automatically!
+    return repository.save(employee);
+}
+```
+
+### Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    CLIENT REQUEST (REST API)                    │
+└────────────────────────────┬────────────────────────────────────┘
+                             ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                      CONTROLLER LAYER                           │
+│  • EmployeeController                                           │
+│  • DepartmentController                                         │
+│  • AddressController                                            │
+└────────────────────────────┬────────────────────────────────────┘
+                             ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                  🎯 AOP ASPECT (AuditAspect)                   │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ @Before Advice - Captures OLD state (deep copy)         │  │
+│  │   • Executed BEFORE service method                       │  │
+│  │   • For UPDATE/DELETE operations                         │  │
+│  │   • Stores snapshot in ThreadLocal                       │  │
+│  └──────────────────────────────────────────────────────────┘  │
+└────────────────────────────┬────────────────────────────────────┘
+                             ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                      SERVICE LAYER                              │
+│  • EmployeeService                                              │
+│  • DepartmentService                                            │
+│  • AddressService                                               │
+│  • @Auditable annotated methods                                 │
+└────────────────────────────┬────────────────────────────────────┘
+                             ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                  🎯 AOP ASPECT (AuditAspect)                   │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │ @AfterReturning Advice - Logs audit event               │  │
+│  │   • Executed AFTER successful service method             │  │
+│  │   • Compares OLD vs NEW state                            │  │
+│  │   • Calls AuditService to persist event                  │  │
+│  └──────────────────────────────────────────────────────────┘  │
+└────────────────────────────┬────────────────────────────────────┘
+                             ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                      AUDIT SERVICE                              │
+│  • logEntityCreated()                                           │
+│  • logEntityUpdated()                                           │
+│  • logEntityDeleted()                                           │
+│  • detectChanges() - Field comparison                           │
+└────────────────────────────┬────────────────────────────────────┘
+                             ↓
+┌─────────────────────────────────────────────────────────────────┐
+│                      DATABASE                                   │
+│  • EMPLOYEE, DEPARTMENT, ADDRESS tables                         │
+│  • AUDIT_TABLE (audit events)                                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### How AOP Auditing Works (Step-by-Step)
+
+#### **Step 1: Method Called with @Auditable Annotation**
+
+```java
+// In EmployeeService.java
+@Auditable(action = AuditAction.UPDATE, domain = "HR", entity = "EMPLOYEE")
+public Employee updateEmployee(Long id, Employee details) {
+    Employee employee = employeeRepository.findById(id)
+        .orElseThrow(() -> new EmployeeNotFoundException(id));
+    
+    employee.setFirstName(details.getFirstName());
+    employee.setLastName(details.getLastName());
+    // ... update other fields
+    
+    return employeeRepository.save(employee);
+}
+```
+
+#### **Step 2: @Before Advice Intercepts (For UPDATE/DELETE)**
+
+```java
+// In AuditAspect.java
+@Before("@annotation(auditable)")
+public void beforeAuditableMethod(JoinPoint joinPoint, Auditable auditable) {
+    if (auditable.action() == AuditAction.UPDATE || auditable.action() == AuditAction.DELETE) {
+        // 1. Extract entity ID from method arguments
+        Long entityId = (Long) args[0];  // First argument is ID
+        
+        // 2. Dynamically find the entity (e.g., getEmployeeById)
+        Object currentEntity = findEntityById(service, entityId, "EMPLOYEE");
+        
+        // 3. Create DEEP COPY to capture old state
+        Object deepCopy = createDeepCopy(currentEntity);
+        
+        // 4. Store in ThreadLocal (thread-safe storage)
+        oldEntityState.set(deepCopy);
+    }
+}
+```
+
+**Why Deep Copy?**
+- Without deep copy: old and new would reference the same object → No changes detected! ❌
+- With deep copy: old and new are independent objects → Changes properly detected! ✅
+
+#### **Step 3: Original Service Method Executes**
+
+```java
+// Business logic executes normally
+employee.setFirstName("Jane");
+employee.setLastName("Smith");
+return employeeRepository.save(employee);  // Version auto-incremented
+```
+
+#### **Step 4: @AfterReturning Advice Logs Audit**
+
+```java
+// In AuditAspect.java
+@AfterReturning(pointcut = "@annotation(auditable)", returning = "result")
+public void afterAuditableMethod(JoinPoint joinPoint, Auditable auditable, Object result) {
+    String domain = auditable.domain();    // "HR"
+    String entity = auditable.entity();    // "EMPLOYEE"
+    String initiator = extractInitiator(args, result);  // "admin@company.com"
+    
+    switch (auditable.action()) {
+        case UPDATE:
+            Object oldEntity = oldEntityState.get();  // Get from ThreadLocal
+            auditService.logEntityUpdated(domain, entity, oldEntity, result, initiator);
+            break;
+        // ... other cases
+    }
+    
+    oldEntityState.remove();  // Clean up ThreadLocal
+}
+```
+
+#### **Step 5: AuditService Detects Changes**
+
+```java
+// In AuditService.java
+public void logEntityUpdated(String domain, String entity, Object oldEntity, Object newEntity, String initiator) {
+    // 1. Detect changes field-by-field
+    Map<String, Map<String, Object>> changes = detectChanges(oldEntity, newEntity);
+    
+    // Example changes:
+    // {
+    //   "firstName": {"old": "John", "new": "Jane"},
+    //   "lastName": {"old": "Doe", "new": "Smith"},
+    //   "email": {"old": "john@example.com", "new": "jane@example.com"}
+    // }
+    
+    // 2. Generate human-readable summary
+    String summary = "EMPLOYEE updated: firstName (from 'John' to 'Jane'), lastName (from 'Doe' to 'Smith')";
+    
+    // 3. Create JSON payload with old/new/changes
+    Map<String, Object> payload = new HashMap<>();
+    payload.put("oldValue", oldEntity);
+    payload.put("newValue", newEntity);
+    payload.put("changes", changes);
+    
+    // 4. Save to AUDIT_TABLE
+    logEvent(domain, entity, entityId, "UPDATED", payload, summary, version, initiator);
+}
+```
+
+#### **Step 6: Audit Event Persisted**
+
+```sql
+INSERT INTO AUDIT_TABLE (
+    EVENT_DOMAIN, EVENT_ENTITY, EVENT_ENTITY_ID, EVENT_NAME,
+    EVENT_PAYLOAD, EVENT_SUMMARY, EVENT_ENTITY_VERSION,
+    EVENT_TIMESTAMP, EVENT_INITIATOR
+) VALUES (
+    'HR',
+    'EMPLOYEE',
+    7,
+    'UPDATED',
+    '{"oldValue":{...},"newValue":{...},"changes":{...}}',
+    'EMPLOYEE updated: firstName (from ''John'' to ''Jane''), lastName (from ''Doe'' to ''Smith'')',
+    2,
+    '2025-10-17 10:30:15',
+    'admin@company.com'
+);
+```
+
+### Applying Auditing to Any Service
+
+#### Example 1: Employee Service (Already Implemented)
+
+```java
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class EmployeeService {
+
+    @Auditable(action = AuditAction.CREATE, domain = "HR", entity = "EMPLOYEE")
+    public Employee createEmployee(Employee employee) {
+        return employeeRepository.save(employee);
+    }
+
+    @Auditable(action = AuditAction.UPDATE, domain = "HR", entity = "EMPLOYEE")
+    public Employee updateEmployee(Long id, Employee details) {
+        // Business logic only - no audit code!
+        return employeeRepository.save(updatedEmployee);
+    }
+
+    @Auditable(action = AuditAction.DELETE, domain = "HR", entity = "EMPLOYEE")
+    public void deleteEmployee(Long id) {
+        employeeRepository.delete(employee);
+    }
+}
+```
+
+#### Example 2: Department Service (Already Implemented)
+
+```java
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class DepartmentService {
+
+    @Auditable(action = AuditAction.CREATE, domain = "HR", entity = "DEPARTMENT")
+    public Department createDepartment(Department department) {
+        return departmentRepository.save(department);
+    }
+
+    @Auditable(action = AuditAction.UPDATE, domain = "HR", entity = "DEPARTMENT")
+    public Department updateDepartment(Long id, Department details) {
+        return departmentRepository.save(updatedDepartment);
+    }
+
+    @Auditable(action = AuditAction.DELETE, domain = "HR", entity = "DEPARTMENT")
+    public void deleteDepartment(Long id) {
+        departmentRepository.delete(department);
+    }
+}
+```
+
+#### Example 3: Address Service (Already Implemented)
+
+```java
+@Service
+@RequiredArgsConstructor
+@Transactional
+public class AddressService {
+
+    @Auditable(action = AuditAction.CREATE, domain = "HR", entity = "ADDRESS")
+    public Address createAddress(Address address) {
+        return addressRepository.save(address);
+    }
+
+    @Auditable(action = AuditAction.UPDATE, domain = "HR", entity = "ADDRESS")
+    public Address updateAddress(Long id, Address details) {
+        return addressRepository.save(updatedAddress);
+    }
+
+    @Auditable(action = AuditAction.DELETE, domain = "HR", entity = "ADDRESS")
+    public void deleteAddress(Long id) {
+        addressRepository.delete(address);
+    }
+}
+```
+
+### @Auditable Annotation Parameters
+
+| Parameter | Required | Description | Example Values |
+|-----------|----------|-------------|----------------|
+| `action` | ✅ Yes | Type of operation | `AuditAction.CREATE`<br>`AuditAction.UPDATE`<br>`AuditAction.DELETE` |
+| `domain` | ❌ No | Business domain | `"HR"`, `"FINANCE"`, `"IT"`<br>Default: `"HR"` |
+| `entity` | ❌ No | Entity type name | `"EMPLOYEE"`, `"DEPARTMENT"`, `"ADDRESS"`<br>Default: `"EMPLOYEE"` |
+
+### Key Components
+
+#### 1. AuditAspect.java (The Heart of AOP)
+
+```java
+@Aspect
+@Component
+@RequiredArgsConstructor
+@Slf4j
+public class AuditAspect {
+    
+    private final AuditService auditService;
+    private final ObjectMapper objectMapper;
+    private final ThreadLocal<Object> oldEntityState = new ThreadLocal<>();
+    
+    // Intercepts BEFORE method execution
+    @Before("@annotation(auditable)")
+    public void beforeAuditableMethod(JoinPoint joinPoint, Auditable auditable) {
+        // Captures old state for UPDATE/DELETE
+    }
+    
+    // Intercepts AFTER successful method execution
+    @AfterReturning(pointcut = "@annotation(auditable)", returning = "result")
+    public void afterAuditableMethod(JoinPoint joinPoint, Auditable auditable, Object result) {
+        // Logs audit event with change detection
+    }
+    
+    // Creates deep copy to avoid reference issues
+    private Object createDeepCopy(Object entity) {
+        String json = objectMapper.writeValueAsString(entity);
+        return objectMapper.readValue(json, entity.getClass());
+    }
+}
+```
+
+#### 2. AuditService.java (Generic Audit Methods)
+
+```java
+@Service
+@RequiredArgsConstructor
+public class AuditService {
+    
+    // Generic method - works for ANY entity
+    public void logEntityCreated(String domain, String entityType, Object entity, String initiator) {
+        String payload = objectMapper.writeValueAsString(entity);
+        String summary = entityType + " created";
+        logEvent(domain, entityType, entityId, "CREATED", payload, summary, 1, initiator);
+    }
+    
+    // Generic method with change detection
+    public void logEntityUpdated(String domain, String entityType, Object oldEntity, Object newEntity, String initiator) {
+        Map<String, Object> changePayload = new HashMap<>();
+        changePayload.put("oldValue", oldEntity);
+        changePayload.put("newValue", newEntity);
+        changePayload.put("changes", detectChanges(oldEntity, newEntity));
+        
+        String summary = generateGenericUpdateSummary(entityType, oldEntity, newEntity);
+        logEvent(domain, entityType, entityId, "UPDATED", payload, summary, version, initiator);
+    }
+    
+    // Detects field-by-field changes
+    private Map<String, Map<String, Object>> detectChanges(Object oldObj, Object newObj) {
+        Map<String, Object> oldMap = objectMapper.convertValue(oldObj, Map.class);
+        Map<String, Object> newMap = objectMapper.convertValue(newObj, Map.class);
+        
+        // Compare each field...
+    }
+}
+```
+
+#### 3. @Auditable Annotation
+
+```java
+@Target(ElementType.METHOD)
+@Retention(RetentionPolicy.RUNTIME)
+public @interface Auditable {
+    AuditAction action();              // CREATE, UPDATE, DELETE
+    String domain() default "HR";      // Business domain
+    String entity() default "EMPLOYEE"; // Entity type
+}
+```
+
+#### 4. AuditAction Enum
+
+```java
+public enum AuditAction {
+    CREATE,   // For insert operations
+    UPDATE,   // For update operations
+    DELETE    // For delete operations
+}
+```
+
+### Benefits of This Approach
+
+| Benefit | Description |
+|---------|-------------|
+| ✅ **Non-Invasive** | Business logic stays clean - no audit code mixed in |
+| ✅ **Reusable** | Write audit logic once, use everywhere |
+| ✅ **Consistent** | Same audit structure for all entities |
+| ✅ **Easy to Maintain** | Change audit logic in one place |
+| ✅ **Type-Safe** | Compile-time checking with annotations |
+| ✅ **Automatic** | Developers can't forget to log audits |
+| ✅ **Thread-Safe** | ThreadLocal ensures concurrent request safety |
+| ✅ **Accurate** | Deep copy ensures correct change detection |
 
 ---
 
@@ -795,4 +1226,3 @@ For questions or support, please contact the development team.
 ---
 
 **Built with ❤️ using Spring Boot**
-

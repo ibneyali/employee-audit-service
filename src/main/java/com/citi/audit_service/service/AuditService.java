@@ -42,50 +42,106 @@ public class AuditService {
     }
 
     /**
+     * ============================================
+     * GENERIC AUDIT METHODS - Work with any entity
+     * ============================================
+     */
+
+    /**
+     * Log entity creation event - Generic for any entity type
+     */
+    public void logEntityCreated(String domain, String entityType, Object entity, String initiator) {
+        try {
+            String payload = objectMapper.writeValueAsString(entity);
+            String summary = entityType + " created";
+            logEvent(domain, entityType, getEntityId(entity), "CREATED", payload, summary, 1, initiator);
+        } catch (JsonProcessingException e) {
+            throw new AuditSerializationException("Failed to serialize " + entityType + " data for audit", e);
+        }
+    }
+
+    /**
+     * Log entity update event with old and new values - Generic for any entity type
+     */
+    public void logEntityUpdated(String domain, String entityType, Object oldEntity, Object newEntity, String initiator) {
+        try {
+            Map<String, Object> changePayload = new HashMap<>();
+            changePayload.put("oldValue", oldEntity);
+            changePayload.put("newValue", newEntity);
+            changePayload.put("changes", detectChanges(oldEntity, newEntity));
+
+            String payload = objectMapper.writeValueAsString(changePayload);
+            String summary = generateGenericUpdateSummary(entityType, oldEntity, newEntity);
+
+            logEvent(domain, entityType, getEntityId(newEntity), "UPDATED", payload, summary,
+                    getVersion(newEntity), initiator);
+        } catch (JsonProcessingException e) {
+            throw new AuditSerializationException("Failed to serialize " + entityType + " data for audit", e);
+        }
+    }
+
+    /**
+     * Log entity deletion event - Generic for any entity type
+     */
+    public void logEntityDeleted(String domain, String entityType, Object entity, String initiator) {
+        try {
+            String payload = objectMapper.writeValueAsString(entity);
+            String summary = entityType + " deleted";
+            logEvent(domain, entityType, getEntityId(entity), "DELETED", payload, summary,
+                    getVersion(entity), initiator);
+        } catch (JsonProcessingException e) {
+            throw new AuditSerializationException("Failed to serialize " + entityType + " data for audit", e);
+        }
+    }
+
+    /**
+     * Generate human-readable summary of changes for any entity
+     */
+    private String generateGenericUpdateSummary(String entityType, Object oldObj, Object newObj) {
+        Map<String, Map<String, Object>> changes = detectChanges(oldObj, newObj);
+        if (changes.isEmpty()) {
+            return entityType + " updated - no changes detected";
+        }
+
+        StringBuilder summary = new StringBuilder(entityType + " updated: ");
+        List<String> changedFields = new ArrayList<>();
+
+        changes.forEach((field, change) -> {
+            // Skip metadata fields
+            if (!field.equals("id") && !field.equals("updatedTimestamp") && !field.equals("createdTimestamp")) {
+                Object oldValue = change.get("old");
+                Object newValue = change.get("new");
+                changedFields.add(String.format("%s (from '%s' to '%s')", field, oldValue, newValue));
+            }
+        });
+
+        if (changedFields.isEmpty()) {
+            return entityType + " updated - metadata only";
+        }
+
+        summary.append(String.join(", ", changedFields));
+        return summary.toString();
+    }
+
+    /**
      * Log employee creation event
      */
     public void logEmployeeCreated(Object employee, String initiator) {
-        try {
-            String payload = objectMapper.writeValueAsString(employee);
-            String summary = "Employee created";
-            logEvent("HR", "EMPLOYEE", getEntityId(employee), "CREATED", payload, summary, 1, initiator);
-        } catch (JsonProcessingException e) {
-            throw new AuditSerializationException("Failed to serialize employee data for audit", e);
-        }
+        logEntityCreated("HR", "EMPLOYEE", employee, initiator);
     }
 
     /**
      * Log employee update event with old and new values
      */
     public void logEmployeeUpdated(Object oldEmployee, Object newEmployee, String initiator) {
-        try {
-            Map<String, Object> changePayload = new HashMap<>();
-            changePayload.put("oldValue", oldEmployee);
-            changePayload.put("newValue", newEmployee);
-            changePayload.put("changes", detectChanges(oldEmployee, newEmployee));
-
-            String payload = objectMapper.writeValueAsString(changePayload);
-            String summary = generateUpdateSummary(oldEmployee, newEmployee);
-
-            logEvent("HR", "EMPLOYEE", getEntityId(newEmployee), "UPDATED", payload, summary,
-                    getVersion(newEmployee), initiator);
-        } catch (JsonProcessingException e) {
-            throw new AuditSerializationException("Failed to serialize employee data for audit", e);
-        }
+        logEntityUpdated("HR", "EMPLOYEE", oldEmployee, newEmployee, initiator);
     }
 
     /**
      * Log employee deletion event
      */
     public void logEmployeeDeleted(Object employee, String initiator) {
-        try {
-            String payload = objectMapper.writeValueAsString(employee);
-            String summary = "Employee deleted";
-            logEvent("HR", "EMPLOYEE", getEntityId(employee), "DELETED", payload, summary,
-                    getVersion(employee), initiator);
-        } catch (JsonProcessingException e) {
-            throw new AuditSerializationException("Failed to serialize employee data for audit", e);
-        }
+        logEntityDeleted("HR", "EMPLOYEE", employee, initiator);
     }
 
     /**
