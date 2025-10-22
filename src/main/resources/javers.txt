@@ -1,0 +1,11 @@
+Explored tools for object versioning and changelog tracking.
+JaVers is recommended as it provides a complete framework for capturing object snapshots, computing diffs, and maintaining history over time.
+It can be integrated with Spring AOP, where AOP handles interception (when and where to audit), and JaVers manages versioning (what changed and how).
+This combination provides a robust and flexible audit mechanism for domain objects.
+
+Aspect	Spring AOP	JaVers
+Purpose	Handles cross-cutting concerns via method interception.	Tracks and versions object changes with diffs.
+Focus	Execution logic – when and where to run code.	Data changes – what changed and who changed it.
+Output	Logs or triggers after method execution.	JSON/structured object diffs and snapshots.
+Storage	No built-in persistence.	Stores snapshots in SQL/Mongo.
+Integration	Intercepts service methods.	Used inside intercepted methods for auditing.
