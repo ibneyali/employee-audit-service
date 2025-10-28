@@ -2,6 +2,11 @@ spring:
   application:
     name: audit-service
 
+  # Exclude JaVers auto-configuration to use manual configuration
+  autoconfigure:
+    exclude:
+      - org.javers.spring.boot.sql.JaversSqlAutoConfiguration
+
 # HSQLDB Configuration
   datasource:
     url: jdbc:hsqldb:mem:auditdb

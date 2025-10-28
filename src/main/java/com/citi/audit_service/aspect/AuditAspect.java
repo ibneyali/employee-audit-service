@@ -2,7 +2,7 @@ package com.citi.audit_service.aspect;
 
 import com.citi.audit_service.annotation.AuditAction;
 import com.citi.audit_service.annotation.Auditable;
-import com.citi.audit_service.service.AuditService;
+import com.citi.audit_service.service.JaversAuditService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +18,11 @@ import org.springframework.stereotype.Component;
  * Generic AOP Aspect for auditing operations on any entity.
  * This aspect intercepts methods annotated with @Auditable and logs audit events.
  * Works with Employee, Department, Address, Training, or any other entity.
+ *
+ * Now integrated with JaVers for:
+ * - Object versioning and snapshot storage
+ * - Semantic diff computation
+ * - Change history tracking
  */
 @Aspect
 @Component
@@ -25,7 +30,7 @@ import org.springframework.stereotype.Component;
 @Slf4j
 public class AuditAspect {
 
-    private final AuditService auditService;
+    private final JaversAuditService javersAuditService;
     private final ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
 
     // ThreadLocal to store old entity state for UPDATE/DELETE operations
@@ -55,7 +60,7 @@ public class AuditAspect {
 
                         // Store snapshot of current state
                         oldEntityState.set(deepCopy);
-                        log.debug("Captured old state for {} with ID: {}", auditable.entity(), entityId);
+                        log.debug("Captured old state for {} with ID: {} (for JaVers diff)", auditable.entity(), entityId);
                     }
                 } catch (Exception e) {
                     log.error("Failed to capture old {} state for audit", auditable.entity(), e);
@@ -66,6 +71,7 @@ public class AuditAspect {
 
     /**
      * Intercept methods after successful execution to log audit events
+     * Now uses JaVers for snapshot storage and diff computation
      */
     @AfterReturning(pointcut = "@annotation(auditable)", returning = "result")
     public void afterAuditableMethod(JoinPoint joinPoint, Auditable auditable, Object result) {
@@ -98,25 +104,25 @@ public class AuditAspect {
     }
 
     /**
-     * Handle CREATE audit event - generic for any entity
+     * Handle CREATE audit event - uses JaVers to commit snapshot
      */
     private void handleCreate(Object result, String domain, String entity, String initiator) {
         if (result != null) {
-            auditService.logEntityCreated(domain, entity, result, initiator);
-            log.debug("Audit logged: {} created - ID: {}", entity, getEntityId(result));
+            javersAuditService.logEntityCreated(domain, entity, result, initiator);
+            log.debug("Audit logged with JaVers: {} created - ID: {}", entity, getEntityId(result));
         }
     }
 
     /**
-     * Handle UPDATE audit event - generic for any entity
+     * Handle UPDATE audit event - uses JaVers to compute diff and commit snapshot
      */
     private void handleUpdate(Object result, String domain, String entity, String initiator) {
         if (result != null) {
             Object oldEntity = oldEntityState.get();
 
             if (oldEntity != null) {
-                auditService.logEntityUpdated(domain, entity, oldEntity, result, initiator);
-                log.debug("Audit logged: {} updated - ID: {}", entity, getEntityId(result));
+                javersAuditService.logEntityUpdated(domain, entity, oldEntity, result, initiator);
+                log.debug("Audit logged with JaVers: {} updated - ID: {}", entity, getEntityId(result));
             } else {
                 log.warn("Old {} state not found for UPDATE audit", entity);
             }
@@ -124,14 +130,14 @@ public class AuditAspect {
     }
 
     /**
-     * Handle DELETE audit event - generic for any entity
+     * Handle DELETE audit event - uses JaVers to commit shallow delete
      */
     private void handleDelete(String domain, String entity, String initiator) {
         Object deletedEntity = oldEntityState.get();
 
         if (deletedEntity != null) {
-            auditService.logEntityDeleted(domain, entity, deletedEntity, initiator);
-            log.debug("Audit logged: {} deleted - ID: {}", entity, getEntityId(deletedEntity));
+            javersAuditService.logEntityDeleted(domain, entity, deletedEntity, initiator);
+            log.debug("Audit logged with JaVers: {} deleted - ID: {}", entity, getEntityId(deletedEntity));
         } else {
             log.warn("Old {} state not found for DELETE audit", entity);
         }

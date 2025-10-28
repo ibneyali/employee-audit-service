@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import java.util.ArrayList;
+import java.util.stream.Stream;
 
 @Service
 @RequiredArgsConstructor
@@ -40,12 +41,6 @@ public class AuditService {
         event.setEventInitiator(initiator);
         auditEventRepository.save(event);
     }
-
-    /**
-     * ============================================
-     * GENERIC AUDIT METHODS - Work with any entity
-     * ============================================
-     */
 
     /**
      * Log entity creation event - Generic for any entity type
@@ -121,27 +116,6 @@ public class AuditService {
 
         summary.append(String.join(", ", changedFields));
         return summary.toString();
-    }
-
-    /**
-     * Log employee creation event
-     */
-    public void logEmployeeCreated(Object employee, String initiator) {
-        logEntityCreated("HR", "EMPLOYEE", employee, initiator);
-    }
-
-    /**
-     * Log employee update event with old and new values
-     */
-    public void logEmployeeUpdated(Object oldEmployee, Object newEmployee, String initiator) {
-        logEntityUpdated("HR", "EMPLOYEE", oldEmployee, newEmployee, initiator);
-    }
-
-    /**
-     * Log employee deletion event
-     */
-    public void logEmployeeDeleted(Object employee, String initiator) {
-        logEntityDeleted("HR", "EMPLOYEE", employee, initiator);
     }
 
     /**
@@ -333,12 +307,12 @@ public class AuditService {
                     Map<String, Map<String, Object>> changes = (Map<String, Map<String, Object>>) payload.get("changes");
 
                     if (changes != null && changes.containsKey(fieldName)) {
-                        return List.of(FieldChangeDTO.from(fieldName, changes.get(fieldName))).stream();
+                        return Stream.of(FieldChangeDTO.from(fieldName, changes.get(fieldName)));
                     }
                 } catch (JsonProcessingException e) {
                     // Skip if parsing fails
                 }
-                return List.<FieldChangeDTO>of().stream();
+                return Stream.empty();
             })
             .collect(Collectors.toList());
     }
